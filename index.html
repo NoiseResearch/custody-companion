@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Custody Companion">
+  <meta name="theme-color" content="#000000">
+  <title>Custody Companion</title>
+  <link rel="icon" type="image/png" href="./angela-icon.png">
+  <link rel="apple-touch-icon" href="./angela-icon.png">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Space+Mono:wght@400;700&family=Inter:wght@300;400;500;600;700&display=swap');
+    * { box-sizing: border-box; margin: 0; }
+    html, body { width: 100%; margin: 0; padding: 0; position: relative; }
+    body { font-family: 'Inter', sans-serif; background: #000000; overflow-x: hidden; }
+    canvas { display: block; }
+    #root { width: 100%; min-height: 100vh; display: flex; flex-direction: column; position: relative; z-index: 1; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script>
+const { useState, useMemo, useEffect, useRef } = React;
+const e = React.createElement;
+
+const MOM = "mom", DAD = "dad", REG = "regular", MIN_DAY = 24 * 60;
+const DEFAULT_COLORS = { mom: "#C2622E", dad: "#1F6E68", vacation: "#7B5CC4", holiday: "#B98A12" };
+const DEFAULT_STATE = { colors: DEFAULT_COLORS, noticeDays: 30, customRules: [], vacations: [], vacationText: "", notif: { leadDays: 1, leadHours: 0, device: false }, generated: true };
+const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+const STORE_KEY = "custody-personal-v1";
+function loadState() { try { const s = localStorage.getItem(STORE_KEY); return s ? JSON.parse(s) : null; } catch (err) { return null; } }
+function saveState(state) { try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (err) {} }
+
+const d = (y, m, day, h = 0, min = 0) => new Date(y, m, day, h, min);
+function nthWeekday(year, month, weekday, n) { const first = new Date(year, month, 1).getDay(); return 1 + ((weekday - first + 7) % 7) + (n - 1) * 7; }
+function lastWeekday(year, month, weekday) { const lastDay = new Date(year, month + 1, 0); return lastDay.getDate() - ((lastDay.getDay() - weekday + 7) % 7); }
+function easterDate(y) { const a = y % 19, b = Math.floor(y / 100), c = y % 100; const dd = Math.floor(b / 4), ex = b % 4, f = Math.floor((b + 8) / 25); const g = Math.floor((b - f + 1) / 3); const h = (19 * a + b - dd - g + 15) % 30; const i = Math.floor(c / 4), k = c % 4; const l = (32 + 2 * ex + 2 * i - h - k) % 7; const m = Math.floor((a + 11 * h + 22 * l) / 451); return new Date(y, Math.floor((h + l - 7 * m + 114) / 31) - 1, ((h + l - 7 * m + 114) % 31) + 1); }
+const parityHolder = (year, evenHolder, oddHolder) => (year % 2 === 0 ? evenHolder : oddHolder);
+
+function holidaysForYear(y) {
+  const H = [];
+  H.push({ name: "New Year's Eve", holder: parityHolder(y, DAD, MOM), start: d(y, 11, 31, 10), end: d(y + 1, 0, 1, 10) });
+  H.push({ name: "New Year's Day", holder: parityHolder(y, MOM, DAD), start: d(y, 0, 1, 10), end: d(y, 0, 2, 10) });
+  H.push({ name: "MLK Weekend", holder: DAD, start: d(y, 0, nthWeekday(y, 0, 1, 3) - 3, 17), end: d(y, 0, nthWeekday(y, 0, 1, 3), 18) });
+  H.push({ name: "Presidents' Day Weekend", holder: MOM, start: d(y, 1, nthWeekday(y, 1, 1, 3) - 3, 17), end: d(y, 1, nthWeekday(y, 1, 1, 3), 18) });
+  const ea = easterDate(y);
+  H.push({ name: "Easter", holder: parityHolder(y, DAD, MOM), start: d(y, ea.getMonth(), ea.getDate(), 8), end: d(y, ea.getMonth(), ea.getDate(), 18) });
+  const md = nthWeekday(y, 4, 0, 2);
+  H.push({ name: "Mother's Day", holder: MOM, start: d(y, 4, md, 8), end: d(y, 4, md, 18) });
+  H.push({ name: "Memorial Day Weekend", holder: MOM, start: d(y, 4, lastWeekday(y, 4, 1) - 3, 17), end: d(y, 4, lastWeekday(y, 4, 1), 18) });
+  const fd = nthWeekday(y, 5, 0, 3);
+  H.push({ name: "Father's Day", holder: DAD, start: d(y, 5, fd, 8), end: d(y, 5, fd, 18) });
+  H.push({ name: "July 4th", holder: parityHolder(y, MOM, DAD), start: d(y, 6, 4, 15), end: d(y, 6, 5, 10) });
+  H.push({ name: "Mom's Birthday", holder: MOM, start: d(y, 6, 25, 8), end: d(y, 6, 25, 18) });
+  H.push({ name: "Labor Day Weekend", holder: DAD, start: d(y, 8, nthWeekday(y, 8, 1, 1) - 3, 17), end: d(y, 8, nthWeekday(y, 8, 1, 1), 18) });
+  H.push({ name: "Dad's Birthday", holder: DAD, start: d(y, 9, 5, 8), end: d(y, 9, 5, 18) });
+  H.push({ name: "Halloween", holder: parityHolder(y, MOM, DAD), start: d(y, 9, 31, 15), end: d(y, 9, 31, 20) });
+  const tg = nthWeekday(y, 10, 4, 4);
+  H.push({ name: "Thanksgiving", holder: parityHolder(y, MOM, DAD), start: d(y, 10, tg, 10), end: d(y, 10, tg + 1, 10) });
+  if (tg !== 23) H.push({ name: "Angela's Birthday", holder: parityHolder(y, MOM, DAD), start: d(y, 10, 23, 15), end: d(y, 10, 23, 20) });
+  H.push({ name: "Christmas Eve", holder: parityHolder(y, DAD, MOM), start: d(y, 11, 24, 10), end: d(y, 11, 25, 10) });
+  H.push({ name: "Christmas Day", holder: parityHolder(y, MOM, DAD), start: d(y, 11, 25, 10), end: d(y, 11, 26, 10) });
+  return H;
+}
+
+function anchorFriday(date) { for (let back = 0; back <= 3; back++) { const f = new Date(date.getFullYear(), date.getMonth(), date.getDate() - back); if (f.getDay() === 5) return f; } return null; }
+const weekendIndexOf = (friday) => Math.ceil(friday.getDate() / 7);
+const weekendHolderForFriday = (friday) => ([1, 3, 4].includes(weekendIndexOf(friday)) ? DAD : MOM);
+
+function baseSegments(date) {
+  const dow = date.getDay();
+  const segs = [];
+  const wkLabel = (fri) => `${["", "1st", "2nd", "3rd", "4th", "5th"][weekendIndexOf(fri)]} weekend`;
+  if (dow === 5) {
+    const fri = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    segs.push({ s: 0, e: 17 * 60, holder: REG, label: "Regular time" });
+    segs.push({ s: 17 * 60, e: MIN_DAY, holder: weekendHolderForFriday(fri), label: wkLabel(fri), wkIdx: weekendIndexOf(fri) });
+  } else if (dow === 6 || dow === 0) {
+    const fri = anchorFriday(date);
+    segs.push({ s: 0, e: MIN_DAY, holder: weekendHolderForFriday(fri), label: wkLabel(fri), wkIdx: weekendIndexOf(fri) });
+  } else if (dow === 1) {
+    const fri = anchorFriday(new Date(date.getFullYear(), date.getMonth(), date.getDate() - 1));
+    segs.push({ s: 0, e: 7 * 60, holder: weekendHolderForFriday(fri), label: wkLabel(fri), wkIdx: weekendIndexOf(fri) });
+    segs.push({ s: 7 * 60, e: MIN_DAY, holder: REG, label: "Regular time" });
+  } else { segs.push({ s: 0, e: MIN_DAY, holder: REG, label: "Regular time" }); }
+  return segs;
+}
+
+function overlayInterval(segs, hs, he, holder, label, kind) {
+  const out = [];
+  for (const seg of segs) {
+    if (he <= seg.s || hs >= seg.e) { out.push(seg); continue; }
+    if (hs > seg.s) out.push({ ...seg, e: hs });
+    out.push({ s: Math.max(seg.s, hs), e: Math.min(seg.e, he), holder, label, kind });
+    if (he < seg.e) out.push({ ...seg, s: he });
+  }
+  return out.sort((a, b) => a.s - b.s);
+}
+
+function getDayInfo(date, vacations) {
+  const y = date.getFullYear();
+  const dayStart = new Date(y, date.getMonth(), date.getDate());
+  const dayEnd = new Date(y, date.getMonth(), date.getDate() + 1);
+  let segs = baseSegments(date);
+  const allH = [...holidaysForYear(y - 1), ...holidaysForYear(y), ...holidaysForYear(y + 1)];
+  const todays = allH.filter((h) => h.start < dayEnd && h.end > dayStart);
+  for (const h of todays) {
+    segs = overlayInterval(segs, Math.max(0, (h.start - dayStart) / 60000), Math.min(MIN_DAY, (h.end - dayStart) / 60000), h.holder, h.name, "holiday");
+  }
+  for (const v of vacations || []) {
+    const s = v.startDate ? new Date(v.startDate.split("-").map(Number).slice(0, 3).concat([0, 0])) : null;
+    const ex = v.endDate ? new Date(v.endDate.split("-").map(Number).slice(0, 3).concat([23, 59])) : null;
+    if (!s || !ex || ex < s || s >= dayEnd || ex <= dayStart) continue;
+    segs = overlayInterval(segs, Math.max(0, (s - dayStart) / 60000), Math.min(MIN_DAY, (ex - dayStart) / 60000), v.parent, "Vacation", "vacation");
+  }
+  const merged = [];
+  for (const seg of segs) {
+    const last = merged[merged.length - 1];
+    if (last && last.holder === seg.holder && last.label === seg.label && last.kind === seg.kind) last.e = seg.e;
+    else merged.push({ ...seg });
+  }
+  return { segments: merged, holidays: todays, isFifth: merged.some((s) => s.wkIdx === 5), hasVacation: merged.some((s) => s.kind === "vacation") };
+}
+
+function fmtTime(mins) { let h = Math.floor(mins / 60), m = mins % 60; const ap = h >= 12 ? "PM" : "AM"; h = h % 12 === 0 ? 12 : h % 12; return `${h}:${String(m).padStart(2, "0")} ${ap}`; }
+const fmtRange = (s, e) => `${s === 0 ? "12:00 AM" : fmtTime(s)} – ${e === MIN_DAY ? "midnight" : fmtTime(e)}`;
+const fmtDateLong = (dt) => `${DOW[dt.getDay()]}, ${MONTHS[dt.getMonth()]} ${dt.getDate()}, ${dt.getFullYear()}`;
+const toKey = (dt) => `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`;
+const parseKey = (k) => { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d); };
+const uid = () => Math.random().toString(36).slice(2, 9);
+const mix = (hex, ratio) => { const n = (hex || "#999999").replace("#", ""); const v = (i) => parseInt(n.slice(i, i + 2), 16) || 153; const f = (c) => Math.round(c * (ratio + 0.18) + 14 * (1 - ratio - 0.18)); return `rgb(${f(v(0))},${f(v(2))},${f(v(4))})`; };
+
+function StarfieldBg() {
+  const canvasRef = useRef(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    let animId;
+    const resize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
+    resize();
+    window.addEventListener("resize", resize);
+    const stars = [];
+    const starCount = 500;
+    const newStar = () => ({ x: (Math.random() - 0.5) * 2, y: (Math.random() - 0.5) * 2, z: Math.random() * 0.9 + 0.1 });
+    for (let i = 0; i < starCount; i++) stars.push(newStar());
+    const speed = 0.0035;
+    const animate = () => {
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const cx = canvas.width / 2, cy = canvas.height / 2;
+      const focal = Math.min(canvas.width, canvas.height) * 0.9;
+      for (const star of stars) {
+        star.z -= speed;
+        if (star.z <= 0.02) { const s = newStar(); star.x = s.x; star.y = s.y; star.z = 1; continue; }
+        const sx = cx + (star.x / star.z) * focal * 0.5;
+        const sy = cy + (star.y / star.z) * focal * 0.5;
+        if (sx < 0 || sx >= canvas.width || sy < 0 || sy >= canvas.height) { const s = newStar(); star.x = s.x; star.y = s.y; star.z = 1; continue; }
+        const size = star.z > 0.5 ? 1 : star.z > 0.2 ? 1.5 : 2;
+        const brightness = Math.min(1, 0.25 + (1 - star.z) * 0.75);
+        ctx.fillStyle = `rgba(255, 255, 255, ${brightness})`;
+        ctx.fillRect(sx, sy, size, size);
+      }
+      animId = requestAnimationFrame(animate);
+    };
+    animate();
+    return () => { cancelAnimationFrame(animId); window.removeEventListener("resize", resize); };
+  }, []);
+  return e("canvas", { ref: canvasRef, style: { position: "fixed", top: 0, left: 0, width: "100%", height: "100%", zIndex: 0, pointerEvents: "none" } });
+}
+
+function VacPicker({ vac, vacations, onChange }) {
+  const other = vac.parent === MOM ? DAD : MOM;
+  const otherName = other === MOM ? "Berenice (Mom)" : "Javier (Dad)";
+  const init = vac.startDate ? parseKey(vac.startDate) : new Date();
+  const [vy, setVy] = useState(init.getFullYear());
+  const [vm, setVm] = useState(init.getMonth());
+  const [anchor, setAnchor] = useState(null);
+  const [hover, setHover] = useState(null);
+  const [err, setErr] = useState("");
+  const dragging = useRef(false);
+  const moved = useRef(false);
+  const downKey = useRef(null);
+
+  const others = useMemo(() => vacations.filter((x) => x.id !== vac.id), [vacations, vac.id]);
+
+  const dayIsBlocked = (dt) => {
+    const info = getDayInfo(dt, others);
+    const otherMin = info.segments.filter((s) => s.holder === other).reduce((a, s) => a + (s.e - s.s), 0);
+    if (otherMin >= 720) return true;
+    return info.holidays.some((h) => h.holder === other);
+  };
+
+  const cells = useMemo(() => {
+    const startPad = new Date(vy, vm, 1).getDay();
+    const daysInMonth = new Date(vy, vm + 1, 0).getDate();
+    const out = [];
+    for (let i = 0; i < startPad; i++) out.push(null);
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dt = new Date(vy, vm, day);
+      out.push({ key: toKey(dt), day, blocked: dayIsBlocked(dt) });
+    }
+    return out;
+  }, [vy, vm, others, other]);
+
+  const blockedKeys = useMemo(() => new Set(cells.filter((c) => c && c.blocked).map((c) => c.key)), [cells]);
+
+  const isBlockedKey = (k) => {
+    if (blockedKeys.has(k)) return true;
+    const dt = parseKey(k);
+    if (dt.getFullYear() === vy && dt.getMonth() === vm) return false;
+    return dayIsBlocked(dt);
+  };
+
+  const commit = (aKey, bKey) => {
+    let a = aKey, b = bKey;
+    if (a > b) [a, b] = [b, a];
+    let cur = parseKey(a);
+    const end = parseKey(b);
+    while (cur <= end) {
+      if (isBlockedKey(toKey(cur))) {
+        setErr(`That range crosses ${otherName}'s time — choose days without their custody.`);
+        return;
+      }
+      cur = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() + 1);
+    }
+    setErr("");
+    onChange({ startDate: a, endDate: b });
+  };
+
+  const cellFromPoint = (x, y) => {
+    const el = document.elementFromPoint(x, y);
+    const cell = el && el.closest ? el.closest("[data-vday]") : null;
+    return cell ? cell.getAttribute("data-vday") : null;
+  };
+
+  const onDown = (e) => {
+    const key = cellFromPoint(e.clientX, e.clientY);
+    if (!key) return;
+    if (isBlockedKey(key)) { setErr(`${otherName} has Angela that day — pick a different day.`); return; }
+    setErr("");
+    if (anchor) { commit(anchor, key); setAnchor(null); setHover(null); return; }
+    dragging.current = true;
+    moved.current = false;
+    downKey.current = key;
+    setAnchor(key);
+    setHover(key);
+  };
+  const onMove = (e) => {
+    if (!dragging.current) return;
+    const key = cellFromPoint(e.clientX, e.clientY);
+    if (key && key !== downKey.current) moved.current = true;
+    if (key) setHover(key);
+  };
+  const onUp = () => {
+    if (!dragging.current) return;
+    dragging.current = false;
+    if (moved.current && anchor && hover) { commit(anchor, hover); setAnchor(null); setHover(null); }
+  };
+
+  const nav = (delta) => {
+    let m = vm + delta, y = vy;
+    if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; }
+    setVm(m); setVy(y);
+  };
+
+  const rangeA = anchor && hover ? (anchor < hover ? anchor : hover) : vac.startDate || null;
+  const rangeB = anchor && hover ? (anchor < hover ? hover : anchor) : vac.endDate || null;
+  const inRange = (k) => rangeA && rangeB && k >= rangeA && k <= rangeB;
+  const isEdge = (k) => k === rangeA || k === rangeB;
+
+  return e("div", { className: "vacpick" },
+    e("div", { className: "vp-nav" },
+      e("button", { type: "button", onClick: () => nav(-1) }, "‹"),
+      e("h4", null, `${MONTHS[vm]} ${vy}`),
+      e("button", { type: "button", onClick: () => nav(1) }, "›")
+    ),
+    e("div", { className: "vgrid vp-dow" }, DOW.map((w) => e("div", { key: w, className: "vdow" }, w))),
+    e("div", { className: "vgrid", onPointerDown: onDown, onPointerMove: onMove, onPointerUp: onUp, onPointerCancel: onUp },
+      cells.map((c, i) => c === null ? e("div", { key: `p${i}` }) : e("div", { key: c.key, "data-vday": c.blocked ? undefined : c.key, className: `vday ${c.blocked ? "off" : ""} ${inRange(c.key) ? "in" : ""} ${isEdge(c.key) ? "edge" : ""}` }, c.day))
+    ),
+    e("p", { className: "hint" }, anchor ? "Now slide or tap the last day." : "Tap first day, slide to last. Striped days are unavailable."),
+    err && e("p", { className: "hint warn" }, err)
+  );
+}
+
+function SetupPage({ state, up }) {
+  const addVac = () => up({ vacations: [...state.vacations, { id: uid(), parent: DAD, startDate: "", endDate: "" }] });
+  const setVac = (id, patch) => up({ vacations: state.vacations.map((v) => (v.id === id ? { ...v, ...patch } : v)) });
+  const delVac = (id) => up({ vacations: state.vacations.filter((v) => v.id !== id) });
+
+  const noticeDeadline = (v) => {
+    if (!v.startDate) return null;
+    const [y, m, day] = v.startDate.split("-").map(Number);
+    return new Date(y, m - 1, day - (Number(state.noticeDays) || 0));
+  };
+  const vacDays = (v) => {
+    if (!v.startDate || !v.endDate) return 0;
+    const s = new Date(v.startDate.split("-").map(Number).slice(0, 3).concat([0, 0]));
+    const ex = new Date(v.endDate.split("-").map(Number).slice(0, 3).concat([0, 0]));
+    return Math.round((ex - s) / 86400000) + 1;
+  };
+
+  return e("div", { className: "page" },
+    e("header", { className: "hdr" }, e("h1", null, "VACATIONS & SETTINGS")),
+    e("section", { className: "card" },
+      e("h2", null, "VACATION PLANS"),
+      e("div", { className: "noticeRow" },
+        e("label", { className: "lbl" }, "NOTIFY BERENICE"),
+        e("input", { type: "number", min: "0", className: "inp num", value: state.noticeDays, onChange: (ev) => up({ noticeDays: ev.target.value }) }),
+        e("span", { className: "lbl" }, "DAYS IN ADVANCE")
+      ),
+      state.vacations.map((v) => {
+        const dl = noticeDeadline(v), days = vacDays(v);
+        return e("div", { className: "rulebox", key: v.id },
+          e("div", { className: "vp-parentrow" },
+            e("label", { className: "vp-parentlbl" }, "WHOSE VACATION?",
+              e("select", { className: "inp", value: v.parent, onChange: (ev) => setVac(v.id, { parent: ev.target.value, startDate: "", endDate: "" }) },
+                e("option", { value: DAD }, "Javier (Dad) — me"),
+                e("option", { value: MOM }, "Berenice (Mom)")
+              )
+            ),
+            e("button", { className: "x big", onClick: () => delVac(v.id) }, "REMOVE")
+          ),
+          e(VacPicker, { vac: v, vacations: state.vacations, onChange: (patch) => setVac(v.id, patch) }),
+          v.startDate && v.endDate && e("p", { className: "hint" },
+            `${fmtDateLong(parseKey(v.startDate))} → ${fmtDateLong(parseKey(v.endDate))} (${days} day${days > 1 ? "s" : ""})`,
+            dl && ` — Notify by ${fmtDateLong(dl)}`
+          )
+        );
+      }),
+      e("button", { className: "secondary", onClick: addVac }, "+ ADD VACATION DATES")
+    ),
+    e("section", { className: "card" },
+      e("h2", null, "CHOOSE YOUR COLORS"),
+      e("div", { className: "colorgrid" },
+        e("label", null, e("input", { type: "color", value: state.colors.mom, onChange: (ev) => up({ colors: { ...state.colors, mom: ev.target.value } }) }), "BERENICE (MOM)"),
+        e("label", null, e("input", { type: "color", value: state.colors.dad, onChange: (ev) => up({ colors: { ...state.colors, dad: ev.target.value } }) }), "JAVIER (DAD)"),
+        e("label", null, e("input", { type: "color", value: state.colors.vacation, onChange: (ev) => up({ colors: { ...state.colors, vacation: ev.target.value } }) }), "VACATION"),
+        e("label", null, e("input", { type: "color", value: state.colors.holiday, onChange: (ev) => up({ colors: { ...state.colors, holiday: ev.target.value } }) }), "HOLIDAYS")
+      )
+    )
+  );
+}
+
+function CalendarPage({ state, meta, segColor }) {
+  const today = new Date();
+  const [viewYear, setViewYear] = useState(today.getFullYear());
+  const [viewMonth, setViewMonth] = useState(today.getMonth());
+  const [selected, setSelected] = useState(new Date(today.getFullYear(), today.getMonth(), today.getDate()));
+
+  const selInfo = useMemo(() => getDayInfo(selected, state.vacations), [selected, state.vacations]);
+  const dominant = useMemo(() => {
+    const totals = {};
+    for (const s of selInfo.segments) totals[s.holder] = (totals[s.holder] || 0) + (s.e - s.s);
+    return Object.entries(totals).sort((a, b) => b[1] - a[1])[0][0];
+  }, [selInfo]);
+
+  const grid = useMemo(() => {
+    const startPad = new Date(viewYear, viewMonth, 1).getDay();
+    const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+    const cells = [];
+    for (let i = 0; i < startPad; i++) cells.push(null);
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dt = new Date(viewYear, viewMonth, day);
+      cells.push({ dt, info: getDayInfo(dt, state.vacations) });
+    }
+    return cells;
+  }, [viewYear, viewMonth, state.vacations]);
+
+  const nav = (delta) => {
+    let m = viewMonth + delta, y = viewYear;
+    if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; }
+    setViewMonth(m); setViewYear(y);
+  };
+
+  const fifthWeekend = useMemo(() => {
+    const day = nthWeekday(viewYear, viewMonth, 5, 5);
+    if (day > new Date(viewYear, viewMonth + 1, 0).getDate()) return null;
+    return { fri: new Date(viewYear, viewMonth, day), mon: new Date(viewYear, viewMonth, day + 3) };
+  }, [viewYear, viewMonth]);
+
+  const monthHolidays = useMemo(() => {
+    const mStart = new Date(viewYear, viewMonth, 1), mEnd = new Date(viewYear, viewMonth + 1, 1);
+    const all = [...holidaysForYear(viewYear - 1), ...holidaysForYear(viewYear), ...holidaysForYear(viewYear + 1)];
+    return all.filter((h) => h.start < mEnd && h.end > mStart).sort((a, b) => a.start - b.start);
+  }, [viewYear, viewMonth]);
+
+  const fmtHolidayRange = (h) => {
+    const s = h.start, ex = new Date(h.end.getTime() - 1);
+    const sTxt = `${MONTHS[s.getMonth()].slice(0, 3)} ${s.getDate()}`;
+    if (s.getMonth() === ex.getMonth() && s.getDate() === ex.getDate()) return sTxt;
+    if (s.getMonth() === ex.getMonth()) return `${sTxt}–${ex.getDate()}`;
+    return `${sTxt} – ${MONTHS[ex.getMonth()].slice(0, 3)} ${ex.getDate()}`;
+  };
+
+  const gradientFor = (segments) => {
+    const stops = segments.map((s) => {
+      const c = segColor(s, true);
+      return `${c} ${(s.s / MIN_DAY) * 100}%, ${c} ${(s.e / MIN_DAY) * 100}%`;
+    });
+    return `linear-gradient(to bottom, ${stops.join(", ")})`;
+  };
+
+  const todayKey = toKey(today), selKey = toKey(selected);
+  const headColor = dominant === REG ? meta[REG].color : meta[dominant].color;
+
+  return e("div", { className: "page" },
+    e("header", { className: "hdr" }, e("h1", null, "WHO HAS ANGELA?")),
+    e("section", { className: "answer", style: { borderColor: headColor } },
+      e("div", { className: "answer-top" },
+        e("input", { type: "date", className: "inp datepick", value: selKey, onChange: (ev) => { if (!ev.target.value) return; const [y, m, day] = ev.target.value.split("-").map(Number); setSelected(new Date(y, m - 1, day)); setViewYear(y); setViewMonth(m - 1); } }),
+        e("button", { className: "secondary", onClick: () => { const t = new Date(today.getFullYear(), today.getMonth(), today.getDate()); setSelected(t); setViewYear(t.getFullYear()); setViewMonth(t.getMonth()); } }, "TODAY")
+      ),
+      e("div", { className: "answer-date" }, fmtDateLong(selected)),
+      e("div", { className: "answer-head", style: { color: headColor } }, dominant === REG ? "Regular time" : `With ${meta[dominant].label}`)
+    ),
+    e("section", { className: "cal" },
+      e("div", { className: "cal-nav" },
+        e("button", { onClick: () => nav(-1) }, "‹"),
+        e("h2", null, `${MONTHS[viewMonth]} ${viewYear}`),
+        e("button", { onClick: () => nav(1) }, "›")
+      ),
+      fifthWeekend && e("div", { className: "note" }, `5TH WEEKEND: Fri ${MONTHS[fifthWeekend.fri.getMonth()].slice(0,3)} ${fifthWeekend.fri.getDate()} → Mon ${MONTHS[fifthWeekend.mon.getMonth()].slice(0,3)} ${fifthWeekend.mon.getDate()} to Berenice`),
+      e("div", { className: "cal-grid cal-dow" }, DOW.map((w) => e("div", { key: w }, w))),
+      e("div", { className: "cal-grid" },
+        grid.map((cell, i) => cell === null ? e("div", { key: `p${i}` }) : e("button", { key: toKey(cell.dt), className: `day ${toKey(cell.dt) === selKey ? "sel" : ""} ${toKey(cell.dt) === todayKey ? "today" : ""}`, style: { background: gradientFor(cell.info.segments) }, onClick: () => setSelected(cell.dt) },
+          e("div", { className: "day-num" }, cell.dt.getDate()),
+          cell.info.holidays.length > 0 && e("div", { className: "day-label" }, cell.info.holidays[0].name.slice(0, 12)),
+          cell.info.hasVacation && e("div", { className: "day-label" }, "VACATION")
+        ))
+      ),
+      monthHolidays.length > 0 && e("div", { className: "hols" },
+        e("h3", null, "HOLIDAYS"),
+        monthHolidays.map((h) => e("div", { key: `${h.name}${h.start}` }, `${fmtHolidayRange(h)} ★ ${h.name}`))
+      )
+    )
+  );
+}
+
+function CustodyApp() {
+  const [state, setState] = useState(DEFAULT_STATE);
+  const [page, setPage] = useState("calendar");
+  const [loaded, setLoaded] = useState(false);
+  const saveTimer = useRef(null);
+
+  useEffect(() => {
+    const s = loadState();
+    if (s) setState({ ...DEFAULT_STATE, ...s, colors: { ...DEFAULT_COLORS, ...(s.colors || {}) } });
+    setLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => saveState(state), 500);
+    return () => clearTimeout(saveTimer.current);
+  }, [state, loaded]);
+
+  const up = (patch) => setState((s) => ({ ...s, ...patch }));
+
+  const meta = useMemo(() => ({
+    [MOM]: { label: "Berenice (Mom)", color: state.colors.mom, soft: mix(state.colors.mom, 0.22) },
+    [DAD]: { label: "Javier (Dad)", color: state.colors.dad, soft: mix(state.colors.dad, 0.22) },
+    [REG]: { label: "Regular time", color: "#9A958C", soft: "#161616" },
+  }), [state.colors]);
+
+  const segColor = (seg, soft) => {
+    if (seg.kind === "vacation") return soft ? mix(state.colors.vacation, 0.25) : state.colors.vacation;
+    return soft ? meta[seg.holder].soft : meta[seg.holder].color;
+  };
+
+  if (!loaded) return e("div", { className: "app" }, e("style", null, css()), e("p", { style: { padding: "40px 0", textAlign: "center", color: "#b0b0b0" } }, "Loading…"));
+
+  return e(React.Fragment, null,
+    e(StarfieldBg),
+    e("div", { className: "app" },
+      e("style", null, css()),
+      e("nav", { className: "nav" },
+        e("button", { className: page === "calendar" ? "on" : "", onClick: () => setPage("calendar") }, "CALENDAR"),
+        e("button", { className: page === "notifications" ? "on" : "", onClick: () => setPage("notifications") }, "NOTIFICATIONS"),
+        e("button", { onClick: () => setPage("setup") }, "SETTINGS")
+      ),
+      page === "calendar" && e(CalendarPage, { state, meta, segColor }),
+      page === "setup" && e(SetupPage, { state, up })
+    )
+  );
+}
+
+const css = () => `
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Space+Mono:wght@400;700&family=Inter:wght@300;400;500;600;700&display=swap');
+* { box-sizing: border-box; margin: 0; }
+.app { font-family: 'Inter', sans-serif; background: transparent; color: #e8e8e8; min-height: 100vh; max-width: 900px; margin: 0 auto; padding: 20px 16px 60px; position: relative; z-index: 1; }
+.nav { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+.nav button { font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 700; padding: 10px 16px; border: 1.5px solid #ffffff; background: transparent; color: #ffffff; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; transition: all 0.2s; }
+.nav button:hover { background: rgba(255, 255, 255, 0.1); }
+.nav button.on { background: #ffffff; color: #1a1a1a; }
+.page { display: flex; flex-direction: column; gap: 18px; }
+.hdr { padding: 8px 0; border-bottom: 1.5px solid #404040; }
+.hdr h1 { font-family: 'Orbitron', sans-serif; font-weight: 900; font-size: clamp(28px, 8vw, 42px); margin: 8px 0; color: #ffffff; text-transform: uppercase; letter-spacing: 2px; }
+.card { background: rgba(20, 20, 20, 0.8); border: 1px solid #333333; padding: 20px; }
+.card h2 { font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: 700; margin-bottom: 12px; color: #ffffff; text-transform: uppercase; }
+.lbl { display: block; font-size: 12px; font-weight: 600; color: #b8b8b8; margin: 12px 0 6px; text-transform: uppercase; }
+.inp { font-family: 'Space Mono', monospace; font-size: 13px; padding: 10px 12px; border: 1px solid #404040; background: rgba(255, 255, 255, 0.03); color: #e8e8e8; width: 100%; }
+.inp.num { width: 70px; text-align: center; }
+.inp.datepick { width: auto; }
+.hint { font-size: 11px; color: #888888; margin-top: 8px; font-family: 'Space Mono', monospace; }
+.warn { color: #d08080; }
+.secondary { font-family: 'Orbitron', sans-serif; font-size: 12px; font-weight: 700; padding: 10px 16px; border: 1.5px solid #ffffff; background: transparent; color: #ffffff; cursor: pointer; text-transform: uppercase; }
+.x.big { border: 1px solid #606060; padding: 8px 12px; font-size: 12px; background: transparent; color: #909090; cursor: pointer; text-transform: uppercase; }
+.noticeRow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.noticeRow .lbl { margin: 0; }
+.rulebox { border: 1px dashed #404040; padding: 12px; margin-bottom: 12px; background: rgba(255, 255, 255, 0.02); }
+.vp-parentrow { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; }
+.vp-parentlbl { font-size: 11px; font-weight: 600; color: #888888; display: flex; flex-direction: column; gap: 4px; text-transform: uppercase; flex: 1; max-width: 240px; }
+.colorgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.colorgrid label { display: flex; align-items: center; gap: 12px; font-size: 12px; font-weight: 600; color: #b8b8b8; text-transform: uppercase; }
+.colorgrid input[type=color] { width: 48px; height: 36px; border: 1px solid #404040; background: #000000; padding: 2px; cursor: pointer; }
+.vacpick { margin-top: 14px; }
+.vp-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.vp-nav h4 { font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: 700; color: #ffffff; text-transform: uppercase; }
+.vp-nav button { font-size: 18px; width: 34px; height: 34px; border: 1px solid #404040; background: rgba(255, 255, 255, 0.03); color: #b0b0b0; cursor: pointer; }
+.vgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.vgrid:not(.vp-dow) { touch-action: none; }
+.vdow { text-align: center; font-size: 9px; font-weight: 700; color: #666666; text-transform: uppercase; font-family: 'Orbitron', sans-serif; }
+.vday { min-height: 40px; border: 1px solid #1f1f1f; background: rgba(0, 0, 0, 0.9); color: #c8c8c8; font-family: 'Space Mono', monospace; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; cursor: pointer; user-select: none; }
+.vday.off { color: #4a4a4a; text-decoration: line-through; cursor: not-allowed; background: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.05) 0 4px, rgba(0, 0, 0, 0.92) 4px 9px); }
+.vday.in { background: rgba(255, 255, 255, 0.22); border-color: #909090; color: #ffffff; }
+.vday.edge { background: #e8e8e8; border-color: #ffffff; color: #111111; }
+.answer { background: rgba(20, 20, 20, 0.9); border: 1px solid #404040; padding: 20px; }
+.answer-top { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; }
+.answer-date { font-size: 12px; color: #888888; font-family: 'Space Mono', monospace; text-transform: uppercase; }
+.answer-head { font-family: 'Orbitron', sans-serif; font-weight: 800; font-size: clamp(20px, 5vw, 28px); margin: 6px 0 14px; text-transform: uppercase; }
+.cal { margin-top: 8px; }
+.cal-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #404040; }
+.cal-nav h2 { font-family: 'Orbitron', sans-serif; font-size: 18px; font-weight: 700; color: #ffffff; text-transform: uppercase; }
+.cal-nav button { font-size: 22px; width: 42px; height: 42px; border: 1px solid #404040; background: rgba(255, 255, 255, 0.03); color: #b0b0b0; cursor: pointer; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+.cal-dow { margin-bottom: 6px; }
+.cal-dow > div { text-align: center; font-size: 10px; font-weight: 700; color: #808080; text-transform: uppercase; font-family: 'Orbitron', sans-serif; }
+.day { position: relative; min-height: 64px; border: 1px solid #1a1a1a; padding: 4px; cursor: pointer; font: inherit; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; overflow: hidden; background: rgba(0, 0, 0, 0.9); transition: all 0.15s; font-weight: 700; color: #d0d0d0; gap: 2px; }
+.day-num { font-size: 18px; font-weight: 700; }
+.day-label { font-size: 10px; font-weight: 600; color: #a0a0a0; line-height: 1.1; white-space: normal; word-break: break-word; }
+.day:hover { border-color: #404040; background: rgba(255, 255, 255, 0.08); }
+.day.sel { border: 1.5px solid #606060; background: rgba(255, 255, 255, 0.12); }
+.day.today { border: 1.5px solid #888888; background: rgba(255, 255, 255, 0.1); }
+.note { font-size: 12px; color: #b0b0b0; margin: 0 0 12px; padding: 10px 12px; background: rgba(255, 255, 255, 0.04); border: 1px solid #404040; font-family: 'Space Mono', monospace; }
+.hols { margin-top: 18px; background: rgba(255, 255, 255, 0.02); border: 1px solid #404040; padding: 14px 16px; }
+.hols h3 { font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: 700; margin-bottom: 10px; color: #ffffff; text-transform: uppercase; }
+.hols > div { font-size: 12px; color: #b0b0b0; padding: 4px 0; font-family: 'Space Mono', monospace; }
+`;
+
+ReactDOM.createRoot(document.getElementById('root')).render(e(CustodyApp));
+  </script>
+</body>
+</html>
