@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Custody App Test</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { 
+      font-family: Arial, sans-serif; 
+      background: #000; 
+      color: #fff;
+      width: 100%;
+      min-height: 100vh;
+    }
+    #root {
+      width: 100%;
+      min-height: 100vh;
+      background: #1a1a1a;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      text-align: center;
+      background: #0a0a0a;
+      padding: 40px;
+      border-radius: 10px;
+      border: 2px solid #1F6E68;
+    }
+    h1 { margin-bottom: 20px; color: #1F6E68; }
+    p { margin: 10px 0; }
+    .button {
+      background: #1F6E68;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 5px;
+      cursor: pointer;
+      margin-top: 20px;
+      font-size: 16px;
+    }
+    .button:hover { background: #2a9a8f; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <script>
+    const { useState, useEffect } = React;
+    const e = React.createElement;
+    
+    function TestApp() {
+      const [count, setCount] = useState(0);
+      
+      return e('div', { className: 'container' },
+        e('h1', null, '✓ App is Loading!'),
+        e('p', null, 'React is working correctly'),
+        e('p', null, 'Counter: ' + count),
+        e('button', { 
+          className: 'button',
+          onClick: () => setCount(count + 1)
+        }, 'Click Me'),
+        e('p', null, 'If you see this and the button works, React is loaded.')
+      );
+    }
+    
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(e(TestApp));
+  </script>
+</body>
+</html>
