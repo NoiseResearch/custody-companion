@@ -70,7 +70,11 @@ function holidaysForYear(y) {
 }
 
 function anchorFriday(date) { for (let back = 0; back <= 3; back++) { const f = new Date(date.getFullYear(), date.getMonth(), date.getDate() - back); if (f.getDay() === 5) return f; } return null; }
-const weekendIndexOf = (friday) => Math.ceil(friday.getDate() / 7);
+// A weekend belongs to the month where its SATURDAY falls. Number weekends 1,2,3... in that month.
+const weekendIndexOf = (friday) => {
+  const sat = new Date(friday.getFullYear(), friday.getMonth(), friday.getDate() + 1);
+  return Math.floor((sat.getDate() - 1) / 7) + 1;
+};
 const weekendHolderForFriday = (friday) => ([1, 3, 4].includes(weekendIndexOf(friday)) ? DAD : MOM);
 
 function baseSegments(date) {
@@ -407,9 +411,13 @@ function CalendarPage({ state, meta, segColor }) {
   };
 
   const fifthWeekend = useMemo(() => {
-    const day = nthWeekday(viewYear, viewMonth, 5, 5);
-    if (day > new Date(viewYear, viewMonth + 1, 0).getDate()) return null;
-    return { fri: new Date(viewYear, viewMonth, day), mon: new Date(viewYear, viewMonth, day + 3) };
+    // 5th weekend = the one whose SATURDAY is the 5th Saturday of the month
+    const satDay = nthWeekday(viewYear, viewMonth, 6, 5);
+    if (satDay > new Date(viewYear, viewMonth + 1, 0).getDate()) return null;
+    const sat = new Date(viewYear, viewMonth, satDay);
+    const fri = new Date(viewYear, viewMonth, satDay - 1);
+    const mon = new Date(viewYear, viewMonth, satDay + 2);
+    return { fri, mon };
   }, [viewYear, viewMonth]);
 
   const monthHolidays = useMemo(() => {
